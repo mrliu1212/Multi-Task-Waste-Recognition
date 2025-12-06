@@ -1,7 +1,3 @@
-Here is a clean version of the README **without emojis**, and written in a concise, professional style.
-
----
-
 # Waste Object Detection – Project README
 
 This repository provides a complete workflow for preparing a custom waste-detection dataset and training YOLOv8-based object detection and segmentation models. It includes dataset preparation scripts, augmentation pipelines, and multiple model-training configurations.
@@ -78,7 +74,6 @@ Offline dataset augmentation pipeline used to expand dataset variety before trai
 ---
 
 ## Notes
-
 * Ensure that required dependencies (PyTorch, Ultralytics) are installed before running the notebooks.
 * Adjust dataset paths inside each notebook to match your local environment.
 * This workflow supports both detection and segmentation tasks depending on the chosen model and dataset configuration.

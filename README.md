@@ -1,88 +1,200 @@
-# Waste Object Detection – Project README
+# Multi-Task Waste Recognition
 
-This repository contains a comprehensive workflow for developing waste detection and segmentation systems. It utilizes the TACO dataset to train **YOLOv8-based** models. The project is structured to guide the user from raw data acquisition and custom dataset creation through to advanced training techniques such as tiling and offline augmentation.
+Evaluating Deep Learning Models and Data Manipulation on Limited Real-World Trash Data
 
-## Folder Structure
+## Overview
 
-The repository is organized to separate model outputs from source code. The root directory contains the following structure:
+This repository contains a comprehensive waste recognition system that performs multi-task learning on the TACO (Trash Annotations in Context) dataset. The project includes object classification, object detection, and instance segmentation tasks.
 
-```text
-object detection/
-│
-├── v1_outputs/                # Output directory for Baseline model artifacts
-├── v2_outputs/                # Output directory for YOLOv8s model artifacts
-├── v3_outputs/                # Output directory for YOLOv8-P2 model artifacts
-├── v4_outputs/                # Output directory for Tiling model artifacts
-│
-├── 0_taco_dataset_download.ipynb         # Data acquisition script
-├── 2_custom_4cats.ipynb                  # Detection dataset preparation
-├── 3_custom_4cats_seg.ipynb              # Segmentation dataset preparation
-├── v1_yolo_model.ipynb                   # Baseline training script
-├── v2_yolov8s_model.ipynb                # Standard YOLOv8 training script
-├── v3_yolov8s_p2_model.ipynb             # Small-object optimized training
-├── v4_yolov8s_tiling.ipynb               # Tiling strategy training
-├── v5_yolov8s_offline_augmentation.ipynb # Data augmentation pipeline
+## Classification Task
+
+### Introduction
+
+The classification task focuses on categorizing waste items into 4 main classes: **plastic**, **glass**, **paper**, and **unsorted**. This is achieved by mapping the original 60 TACO dataset categories into these 4 broader classes using a custom `CLASS_MAP`.
+
+### Key Features
+
+- **State-of-the-art Architecture**: Uses ConvNeXt-Large, a modern CNN architecture that combines the best of CNNs and Transformers
+- **Optimized Data Pipeline**: Pre-cropped images for maximum GPU utilization (90%+ vs 10-20% with on-the-fly cropping)
+- **Class Imbalance Handling**: Implements weighted CrossEntropyLoss to address severe class imbalance in the dataset
+- **Comprehensive Metrics**: Tracks macro F1, weighted F1, and per-class metrics (precision, recall, F1)
+- **GPU Acceleration**: Optimized data loading with 8 workers and batch size 32
+
+### Dataset
+
+The model is trained on the **TACO (Trash Annotations in Context)** dataset, which contains:
+- 1,500 images
+- 4,784 annotations
+- 60 original categories mapped to 4 classes
+
+#### Class Distribution
+
+The dataset shows significant class imbalance:
+- **Plastic**: ~51% (majority class)
+- **Unsorted**: ~31%
+- **Paper**: ~12%
+- **Glass**: ~5% (minority class)
+
+### Model Architecture
+
+**ConvNeXt-Large** with custom classifier:
+- Base: ConvNeXt-Large (ImageNet pretrained)
+- Classifier: 
+  - LayerNorm
+  - Dropout (0.3)
+  - Linear (1536 → 512)
+  - GELU activation
+  - Dropout (0.2)
+  - Linear (512 → 4 classes)
+- Total parameters: ~197M
+
+### Training Configuration
+
+- **Epochs**: 25
+- **Batch Size**: 32
+- **Learning Rate**: 1e-4 (with cosine annealing)
+- **Optimizer**: AdamW (weight decay: 1e-4)
+- **Loss Function**: CrossEntropyLoss with inverse frequency class weights
+- **Data Augmentation**: 
+  - Random resized crop
+  - Horizontal/Vertical flips
+  - Rotation (±15°)
+  - Color jitter
+  - Random affine transformations
+  - Random erasing
+
+### Results
+
+#### Validation Performance
+- **Accuracy**: 78.94%
+- **Macro F1**: 0.7406
+- **Weighted F1**: 0.7885
+
+#### Test Performance
+- **Accuracy**: 77.39%
+- **Macro F1**: 0.7458
+- **Weighted F1**: 0.7746
+
+#### Per-Class Performance (Test Set)
+
+| Class     | F1 Score | Precision | Recall | Support |
+|-----------|----------|-----------|--------|---------|
+| Plastic   | 0.816    | 0.814     | 0.817  | 230     |
+| Glass     | 0.765    | 0.765     | 0.765  | 17      |
+| Unsorted  | 0.743    | 0.769     | 0.719  | 139     |
+| Paper     | 0.660    | 0.608     | 0.721  | 43      |
+
+### Usage
+
+#### Prerequisites
+
+```bash
+pip install torch torchvision
+pip install opencv-python
+pip install pillow
+pip install tqdm
+pip install scikit-learn
+pip install numpy
 ```
 
------
+#### Running the Notebook
 
-## Step 1: Dataset Preparation Pipeline
+1. **Setup**: Run the setup cell to import libraries and define `CLASS_MAP`
+2. **Download Dataset**: Run the data import cell to download TACO dataset
+3. **Pre-process Images**: Run the pre-processing cell to crop images (one-time operation)
+4. **Train Model**: Run the training cells to train the ConvNeXt model
+5. **Evaluate**: Run the evaluation cell to test on the test set
 
-Before initiating any training loops, the data must be downloaded, filtered, and formatted. Execute the following notebooks in order:
+#### Loading the Trained Model
 
-### 1\. Data Acquisition
+```python
+import torch
+from torchvision import models
 
-**File:** `0_taco_dataset_download.ipynb`
+# Load checkpoint
+checkpoint = torch.load('convnext_taco_classification.pth', weights_only=False)
 
-This notebook establishes the project foundation by downloading the **TACO (Trash Annotations in Context)** dataset. It handles the extraction and organization of raw images and annotation files into a structured working directory required for subsequent processing steps.
+# Recreate model architecture
+model = models.convnext_large(weights=None)
+model.classifier = nn.Sequential(
+    nn.Flatten(start_dim=1),
+    nn.LayerNorm((1536,), eps=1e-6, elementwise_affine=True),
+    nn.Dropout(0.3),
+    nn.Linear(1536, 512),
+    nn.GELU(),
+    nn.Dropout(0.2),
+    nn.Linear(512, 4)
+)
 
-### 2\. Detection Dataset Configuration
+# Load weights
+model.load_state_dict(checkpoint['model_state_dict'])
+model.eval()
 
-**File:** `2_custom_4cats.ipynb`
+# Get class names
+class_names = checkpoint['category_names']  # ['glass', 'paper', 'plastic', 'unsorted']
+```
 
-This script processes the raw TACO annotations to create a custom dataset specifically for object detection. It filters the complex TACO class ontology into a consolidated **four-category** schema. This step ensures the model focuses on the specific waste categories relevant to this project.
+### File Structure
 
-### 3\. Segmentation Mask Generation
+```
+.
+├── classification_notebook.ipynb    # Main classification training notebook
+├── TACO/                            # TACO dataset directory
+│   ├── data/
+│   │   ├── annotations.json         # Dataset annotations
+│   │   └── batch_*/                 # Image batches
+│   └── ...
+└── taco_cropped_v1/                 # Pre-processed cropped images
+    ├── train/
+    │   ├── plastic/
+    │   ├── glass/
+    │   ├── paper/
+    │   └── unsorted/
+    ├── val/
+    └── test/
+```
 
-**File:** `3_custom_4cats_seg.ipynb`
+### CLASS_MAP Details
 
-To enable instance segmentation tasks, this notebook generates precise segmentation masks for the four-category dataset created in the previous step. Running this is essential if you intend to train models that require polygon masks rather than simple bounding boxes.
+The `CLASS_MAP` maps 60 TACO categories to 4 classes:
 
------
+- **Plastic** (25 categories): All plastic items including bottles, containers, bags, etc.
+- **Glass** (4 categories): Glass bottles, jars, cups, broken glass
+- **Paper** (14 categories): Paper, cartons, tissues, cardboard, etc.
+- **Unsorted** (17 categories): Metal items, food waste, composite materials, unknown items
 
-## Step 2: Model Training Strategies
+### Key Optimizations
 
-The repository offers multiple training configurations, ranging from baselines to specialized architectures for small object detection. 
+1. **Pre-cropping**: Images are pre-cropped using ground truth bounding boxes/masks, eliminating CPU bottleneck during training
+2. **Class Weights**: Inverse frequency weighting helps the model learn from minority classes
+3. **Data Augmentation**: Strong augmentation for minority classes, moderate for majority classes
+4. **Efficient Data Loading**: 8 workers with persistent workers for faster data loading
 
-Here is a detailed explanation of each model version found in the repository. The project progresses from a simple baseline to specialized architectures designed to solve specific problems like detecting small trash items or handling high-resolution images.
+### Future Improvements
 
-### `v1_yolo_model.ipynb` – The Baseline
-* **Purpose:** This model serves as the initial benchmark or "sanity check" for the project.
-* **How it works:** It likely uses a standard, out-of-the-box YOLO configuration without extensive customization.
-* **Why use it:** Before implementing complex optimizations, you need a baseline to compare against. If later models (like v3 or v4) do not perform better than this one, it indicates that the advanced techniques are not providing value. It verifies that the dataset is formatted correctly and that the training pipeline is functional.
+- Experiment with different architectures (Vision Transformers, EfficientNet)
+- Implement focal loss for better handling of hard examples
+- Add more sophisticated data augmentation techniques
+- Explore transfer learning from other waste classification datasets
+- Implement ensemble methods
 
-### `v2_yolov8s_model.ipynb` – Standard YOLOv8 Small
-* **Purpose:** This is the primary "workhorse" model for general object detection.
-* **How it works:** It utilizes the **YOLOv8s (Small)** architecture. The "s" stands for small, indicating it has fewer parameters than the Medium (m), Large (l), or Extra Large (x) versions.
+### Citation
 
-### `v3_yolov8s_p2_model.ipynb` – Small Object Optimization (P2 Layer)
-* **Purpose:** This model is specifically engineered to detect **small objects**, which is a common challenge in waste detection (e.g., cigarette butts, bottle caps).
-* **How it works:** Standard YOLO models typically downsample the image significantly (often by a factor of 32 at the deepest layer), causing small objects to disappear from the feature maps. The **P2** architecture adds an extra detection head that operates at a higher resolution (downsampled only by a factor of 4 or 8).
+If you use this code or dataset, please cite:
 
+```bibtex
+@article{taco2019,
+  title={TACO: Trash Annotations in Context for Litter Detection},
+  author={Pedro F. Proença and Pedro Simões},
+  journal={arXiv preprint arXiv:2003.06975},
+  year={2020}
+}
+```
 
-### `v4_yolov8s_tiling.ipynb` – High-Resolution Tiling
-* **Purpose:** This approach handles **high-resolution images** or wide scenes where resizing the entire image to the model's input size (e.g., 640x640) would destroy image details.
-* **How it works:** Instead of resizing the whole image at once, the image is sliced into smaller distinct patches (tiles). The model runs detection on each tile independently.
+### License
 
+[Add your license information here]
 
-### `v5_yolov8s_offline_augmentation.ipynb` – Dataset Expansion
-* **Purpose:** While not a model training script itself, this version represents a change in the *data* strategy rather than the model architecture.
-* **How it works:** It applies offline transformations (rotations, color shifts, flips) to the images *before* training begins, permanently increasing the size of the dataset.
+### Contact
 
------
-
-## Technical Notes & Requirements
-
-  * **Dependencies:** Ensure a Python environment is active with **PyTorch** and **Ultralytics** installed.
-  * **Path Configuration:** Review the top cells of each notebook to ensure dataset paths match your local file system structure.
-  * **Task Support:** This workflow allows for switching between **Object Detection** (bounding boxes) and **Instance Segmentation** (masks) by selecting the appropriate dataset preparation script (Step 1) and model configuration (Step 2).
+[Add your contact information here]
